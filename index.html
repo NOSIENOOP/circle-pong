@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Circle Pong</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        overflow: hidden;
+        background: #000;
+        color: #f6f6f6;
+        font-family: Arial, Helvetica, sans-serif;
+      }
+      canvas { display: block; cursor: none; }
+      .hud {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        display: grid;
+        place-items: center;
+      }
+      .score {
+        text-align: center;
+        font-weight: 700;
+        letter-spacing: .14em;
+        text-transform: uppercase;
+        mix-blend-mode: difference;
+      }
+      .score-number { font-size: clamp(4rem, 13vw, 10rem); line-height: .8; }
+      .score-label { margin-top: 1rem; font-size: .66rem; color: #aaa; }
+      .hint {
+        position: fixed;
+        bottom: 26px;
+        width: 100%;
+        text-align: center;
+        color: #8e8e8e;
+        font-size: .65rem;
+        letter-spacing: .2em;
+        text-transform: uppercase;
+      }
+      .start {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: rgba(0, 0, 0, .18);
+        cursor: pointer;
+        transition: opacity .25s ease;
+      }
+      .start.hidden { opacity: 0; pointer-events: none; }
+      .start-card { text-align: center; }
+      .start h1 { margin: 0 0 .7rem; font-size: clamp(2.2rem, 7vw, 5rem); letter-spacing: -.07em; }
+      .start p { color: #aaa; font-size: .72rem; letter-spacing: .18em; text-transform: uppercase; }
+      .start button {
+        margin-top: 1.7rem;
+        padding: .8rem 1.2rem;
+        border: 1px solid #eee;
+        background: #eee;
+        color: #000;
+        font: 700 .68rem Arial, sans-serif;
+        letter-spacing: .18em;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+      .start button:hover { background: #000; color: #eee; }
+    </style>
+  </head>
+  <body>
+    <canvas id="game" aria-label="Circle Pong game"></canvas>
+    <div class="hud"><div class="score"><div class="score-number" id="score">0</div><div class="score-label">Rallies</div></div></div>
+    <div class="hint">Move your mouse around the circle</div>
+    <div class="start" id="start"><div class="start-card"><h1>CIRCLE<br>PONG</h1><p>Guard the ring with your mouse</p><button id="play">Click to start</button></div></div>
+    <script>
+      const canvas = document.querySelector('#game');
+      const ctx = canvas.getContext('2d');
+      const start = document.querySelector('#start');
+      const play = document.querySelector('#play');
+      const scoreText = document.querySelector('#score');
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      let w, h, cx, cy, ring, running = false, score = 0, last = 0;
+      let audio;
+      const ball = { x: 0, y: 0, vx: 0, vy: 0, r: 8 };
+      const paddle = { angle: -Math.PI / 2, target: -Math.PI / 2, arc: .64 };
+
+      function resize() {
+        const dpr = Math.min(devicePixelRatio || 1, 2);
+        w = innerWidth; h = innerHeight;
+        canvas.width = w * dpr; canvas.height = h * dpr;
+        canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        cx = w / 2; cy = h / 2; ring = Math.min(w, h) * .36;
+        if (!running) resetBall();
+      }
+      function resetBall() {
+        ball.x = cx; ball.y = cy;
+        const a = Math.random() * Math.PI * 2;
+        ball.vx = Math.cos(a) * 300; ball.vy = Math.sin(a) * 300;
+      }
+      function blip() {
+        audio ||= new AudioContext();
+        if (audio.state === 'suspended') audio.resume();
+        const oscillator = audio.createOscillator();
+        const gain = audio.createGain();
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(480, audio.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(280, audio.currentTime + .045);
+        gain.gain.setValueAtTime(.035, audio.currentTime);
+        gain.gain.exponentialRampToValueAtTime(.001, audio.currentTime + .05);
+        oscillator.connect(gain).connect(audio.destination);
+        oscillator.start(); oscillator.stop(audio.currentTime + .055);
+      }
+      function begin() {
+        score = 0; scoreText.textContent = score; running = true; last = performance.now();
+        resetBall(); start.classList.add('hidden'); requestAnimationFrame(loop);
+      }
+      function end() { running = false; start.classList.remove('hidden'); play.textContent = 'Play again'; }
+      function draw() {
+        ctx.clearRect(0, 0, w, h);
+        ctx.strokeStyle = '#343434'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(cx, cy, ring, 0, Math.PI * 2); ctx.stroke();
+        ctx.save(); ctx.translate(cx, cy); ctx.rotate(paddle.angle);
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 8; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.arc(0, 0, ring, -paddle.arc / 2, paddle.arc / 2); ctx.stroke();
+        ctx.restore();
+        ctx.fillStyle = '#fff'; ctx.shadowColor = '#fff'; ctx.shadowBlur = 14;
+        ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+      }
+      function loop(now) {
+        if (!running) return;
+        const dt = Math.min((now - last) / 1000, .025); last = now;
+        let diff = (paddle.target - paddle.angle + Math.PI * 3) % (Math.PI * 2) - Math.PI;
+        paddle.angle += diff * Math.min(1, dt * 16);
+        ball.x += ball.vx * dt; ball.y += ball.vy * dt;
+        const dx = ball.x - cx, dy = ball.y - cy, distance = Math.hypot(dx, dy);
+        if (distance + ball.r >= ring) {
+          const hitAngle = Math.atan2(dy, dx);
+          const between = Math.abs((hitAngle - paddle.angle + Math.PI * 3) % (Math.PI * 2) - Math.PI);
+          if (between < paddle.arc / 2 + .06) {
+            const nx = dx / distance, ny = dy / distance;
+            const dot = ball.vx * nx + ball.vy * ny;
+            const speed = Math.min(Math.hypot(ball.vx, ball.vy) * 1.035, 620);
+            const reflectedX = ball.vx - 2 * dot * nx;
+            const reflectedY = ball.vy - 2 * dot * ny;
+            const impact = (hitAngle - paddle.angle + Math.PI * 3) % (Math.PI * 2) - Math.PI;
+            const curve = impact * .42 + (score % 2 ? .055 : -.055);
+            ball.vx = (reflectedX * Math.cos(curve) - reflectedY * Math.sin(curve)) / Math.hypot(reflectedX, reflectedY) * speed;
+            ball.vy = (reflectedX * Math.sin(curve) + reflectedY * Math.cos(curve)) / Math.hypot(reflectedX, reflectedY) * speed;
+            ball.x = cx + nx * (ring - ball.r - 1); ball.y = cy + ny * (ring - ball.r - 1);
+            score += 1; scoreText.textContent = score; blip();
+          } else { end(); draw(); return; }
+        }
+        draw(); requestAnimationFrame(loop);
+      }
+      addEventListener('pointermove', e => { paddle.target = Math.atan2(e.clientY - cy, e.clientX - cx); });
+      addEventListener('resize', resize); play.addEventListener('click', begin); start.addEventListener('click', e => { if (e.target !== play) begin(); });
+      resize(); draw();
+    </script>
+  </body>
+</html>
