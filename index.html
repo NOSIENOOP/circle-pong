@@ -80,23 +80,54 @@
       const start = document.querySelector('#start');
       const play = document.querySelector('#play');
       const scoreText = document.querySelector('#score');
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
       let w, h, cx, cy, ring, running = false, score = 0, last = 0;
+      let audio;
       const ball = { x: 0, y: 0, vx: 0, vy: 0, r: 8 };
       const paddle = { angle: -Math.PI / 2, target: -Math.PI / 2, arc: .64 };
 
       function resize() {
+        const oldCx = cx, oldCy = cy, oldRadius = ring - ball.r;
         const dpr = Math.min(devicePixelRatio || 1, 2);
         w = innerWidth; h = innerHeight;
         canvas.width = w * dpr; canvas.height = h * dpr;
         canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         cx = w / 2; cy = h / 2; ring = Math.min(w, h) * .36;
-        if (!running) resetBall();
+        if (!running) {
+          resetBall();
+        } else if (oldRadius > 0) {
+          // Preserve the ball's relative position within the playable circle.
+          const scale = Math.max(0, ring - ball.r) / oldRadius;
+          ball.x = cx + (ball.x - oldCx) * scale;
+          ball.y = cy + (ball.y - oldCy) * scale;
+        } else {
+          // A viewport smaller than the ball has no playable interior.
+          ball.x = cx; ball.y = cy;
+        }
       }
       function resetBall() {
         ball.x = cx; ball.y = cy;
         const a = Math.random() * Math.PI * 2;
         ball.vx = Math.cos(a) * 300; ball.vy = Math.sin(a) * 300;
+      }
+      function blip() {
+        if (!AudioContext) return;
+        try {
+          audio ||= new AudioContext();
+          if (audio.state === 'suspended') audio.resume().catch(() => {});
+          const oscillator = audio.createOscillator();
+          const gain = audio.createGain();
+          oscillator.type = 'sine';
+          oscillator.frequency.setValueAtTime(480, audio.currentTime);
+          oscillator.frequency.exponentialRampToValueAtTime(280, audio.currentTime + .045);
+          gain.gain.setValueAtTime(.035, audio.currentTime);
+          gain.gain.exponentialRampToValueAtTime(.001, audio.currentTime + .05);
+          oscillator.connect(gain).connect(audio.destination);
+          oscillator.start(); oscillator.stop(audio.currentTime + .055);
+        } catch (_) {
+          // Sound is optional; audio failures must not interrupt gameplay.
+        }
       }
       function begin() {
         score = 0; scoreText.textContent = score; running = true; last = performance.now();
@@ -127,10 +158,15 @@
           if (between < paddle.arc / 2 + .06) {
             const nx = dx / distance, ny = dy / distance;
             const dot = ball.vx * nx + ball.vy * ny;
-            ball.vx = (ball.vx - 2 * dot * nx) * 1.035;
-            ball.vy = (ball.vy - 2 * dot * ny) * 1.035;
+            const speed = Math.min(Math.hypot(ball.vx, ball.vy) * 1.035, 620);
+            const reflectedX = ball.vx - 2 * dot * nx;
+            const reflectedY = ball.vy - 2 * dot * ny;
+            const impact = (hitAngle - paddle.angle + Math.PI * 3) % (Math.PI * 2) - Math.PI;
+            const curve = impact * .42 + (score % 2 ? .055 : -.055);
+            ball.vx = (reflectedX * Math.cos(curve) - reflectedY * Math.sin(curve)) / Math.hypot(reflectedX, reflectedY) * speed;
+            ball.vy = (reflectedX * Math.sin(curve) + reflectedY * Math.cos(curve)) / Math.hypot(reflectedX, reflectedY) * speed;
             ball.x = cx + nx * (ring - ball.r - 1); ball.y = cy + ny * (ring - ball.r - 1);
-            score += 1; scoreText.textContent = score;
+            score += 1; scoreText.textContent = score; blip();
           } else { end(); draw(); return; }
         }
         draw(); requestAnimationFrame(loop);
